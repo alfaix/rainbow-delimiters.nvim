@@ -43,13 +43,67 @@ local function normalize_change(change)
 end
 
 
+---Merges changes into sorted, disjoint row ranges `{first_row, last_row}`.
+---@param changes integer[][]
+---@return integer[][]
+local function merge_rows(changes)
+	local rows = {}
+	for _, change in ipairs(changes) do
+		if change[1] then
+			rows[#rows + 1] = {change[1], change[3]}
+		end
+	end
+	table.sort(rows, function(a, b) return a[1] < b[1] end)
+	local result = {}
+	for _, r in ipairs(rows) do
+		local last = result[#result]
+		if last and r[1] <= last[2] + 1 then
+			last[2] = math.max(last[2], r[2])
+		else
+			result[#result + 1] = {r[1], r[2]}
+		end
+	end
+	return result
+end
+
+---Highlights the delimiters of a match tree which start within the given rows.
+---Delimiters outside these rows have not been cleared and keep their
+---highlight; re-applying it would stack duplicate extmarks.
+---@param match_tree rainbow_delimiters.MatchTree
+---@param bufnr integer
+---@param lang string
+---@param level integer
+---@param first_row integer
+---@param last_row integer
+---@param priority integer
+---@param hlgroups table<integer, string>  Highlight group per level, filled on demand
+local function highlight_rows(match_tree, bufnr, lang, level, first_row, last_row, priority, hlgroups)
+	local start_row, _, end_row = match_tree.match.container:range()
+	if start_row > last_row or end_row < first_row then return end
+
+	local hlgroup = hlgroups[level]
+	if not hlgroup then
+		hlgroup = lib.hlgroup_at(level)
+		hlgroups[level] = hlgroup
+	end
+	for delimiter in match_tree.match.delimiters:items() do
+		local row = delimiter:range()
+		if row >= first_row and row <= last_row then
+			lib.highlight(bufnr, lang, delimiter, hlgroup, priority)
+		end
+	end
+	for child in match_tree.children:items() do
+		highlight_rows(child, bufnr, lang, level + 1, first_row, last_row, priority, hlgroups)
+	end
+end
+
 ---Update highlights for a range. Called every time text is changed.
 ---@param bufnr   integer  Buffer number
 ---@param changes table   List of node ranges in which the changes occurred
 ---@param tree    vim.treesitter.TSTree  TS tree
 ---@param lang    string  Language
 local function update_range(bufnr, changes, tree, lang)
-	log.debug('Updated range with changes %s', vim.inspect(changes))
+	log.debug(function() return 'Updated range with changes ' .. vim.inspect(changes) end)
 
 	if not lib.enabled_for(lang) or vim.fn.pumvisible() ~= 0 then
 		return
@@ -58,16 +112,22 @@ local function update_range(bufnr, changes, tree, lang)
 	local query = lib.get_query(lang, bufnr)
 	if not query then return end
 
+	local priority = lib.priority(lang, bufnr)
+	local hlgroups = {}
+
 	---Temporary stack of partial match trees; used to build the final match trees
 	local root_node = tree:root()
 
 	-- Build the match tree
-	for _, change in ipairs(changes) do
+	for _, rows in ipairs(merge_rows(changes)) do
 		local match_trees = Stack.new()
-		local start_row, end_row = change[1], change[3] + 1
-		lib.clear_namespace(bufnr, lang, start_row, end_row)
+		local first_row, last_row = rows[1], rows[2]
+		lib.clear_namespace(bufnr, lang, first_row, last_row + 1)
 
-		for _, match in query:iter_matches(root_node, bufnr, start_row, end_row) do
+		-- Matches of enclosing containers are needed as well to determine the
+		-- nesting level, even though only delimiters within the rows get
+		-- highlighted.
+		for _, match in query:iter_matches(root_node, bufnr, first_row, last_row + 1) do
 			---@type rainbow_delimiters.MatchTree
 			local this = MatchTree.assemble(query, match)
 			while match_trees:size() > 0 do
@@ -82,7 +142,7 @@ local function update_range(bufnr, changes, tree, lang)
 			match_trees:push(this)
 		end
 		for _, match_tree in match_trees:iter() do
-			MatchTree.highlight(match_tree, bufnr, lang, 1)
+			highlight_rows(match_tree, bufnr, lang, 1, first_row, last_row, priority, hlgroups)
 		end
 	end
 end
@@ -124,16 +184,10 @@ local function setup_parser(bufnr, parser, start_parent_lang)
 
 			-- Collect changes to pass on to the next step; might have to treat
 			-- injected languages differently.
-			if not parent_lang then
-				-- If we have no parent language, then we use changes, otherwise we use the
-				-- whole tree's range.
-				-- Normalize the changes object if we have no parent language (the one we
-				-- get from on_changedtree)
+			if not parent_lang or parent_lang ~= lang then
+				-- Changes of injected trees are in buffer coordinates as well,
+				-- so there is no need to update the entire code block.
 				changes = vim.tbl_map(normalize_change, changes)
-			elseif parent_lang ~= lang and changes[1] then
-				-- We have a parent language, so we are in an injected language code
-				-- block, thus we update all of the current code block
-				changes = {{tree:root():range()}}
 			else
 				-- some languages (like rust) use injections of the language itself for
 				-- certain functionality (e.g., macros in rust).  For these the

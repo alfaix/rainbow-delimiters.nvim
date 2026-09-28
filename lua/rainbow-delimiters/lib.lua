@@ -86,19 +86,29 @@ function M.get_query(lang, bufnr)
 	return query
 end
 
----Apply highlighting to a single node.
----@param bufnr   integer  Buffer which contains the node
----@param lang    string  Language of the node (to group HL into namespaces)
----@param node    table   Node to highlight
----@param hlgroup string  Name of the highlight group to  apply.
-function M.highlight(bufnr, lang, node, hlgroup)
-	-- range of the capture, zero-indexed
-	local startRow, startCol, endRow, endCol = node:range()
-
+---Highlight priority of the given language in the given buffer.
+---@param lang  string
+---@param bufnr integer
+---@return integer
+function M.priority(lang, bufnr)
 	local priority = config.priority[lang]
 	if type(priority) == "function" then
 		priority = priority(bufnr)
 	end
+	return priority
+end
+
+---Apply highlighting to a single node.
+---@param bufnr    integer  Buffer which contains the node
+---@param lang     string  Language of the node (to group HL into namespaces)
+---@param node     table   Node to highlight
+---@param hlgroup  string  Name of the highlight group to  apply.
+---@param priority integer?  Highlight priority, looked up if omitted
+function M.highlight(bufnr, lang, node, hlgroup, priority)
+	-- range of the capture, zero-indexed
+	local startRow, startCol, endRow, endCol = node:range()
+
+	priority = priority or M.priority(lang, bufnr)
 
 	local nsid = M.nsids[lang]
 
@@ -111,6 +121,10 @@ function M.highlight(bufnr, lang, node, hlgroup)
 			hl_group = hlgroup,
 			priority = priority,
 			strict   = false,
+			-- Deleting a delimiter does not necessarily change the rows which
+			-- get re-highlighted, so its extmark has to go away on its own.
+			invalidate   = true,
+			undo_restore = false,
 		})
 	end
 end

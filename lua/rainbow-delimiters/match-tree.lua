@@ -48,9 +48,13 @@ local tree_mt = {
 	---@param m2 rainbow_delimiters.MatchTree
 	---@return boolean
 	__lt = function(m1, m2)
-		local c1 = m1.match.container
-		local r2 = {m2.match.container:range()}
-		return vim.treesitter.node_contains(c1, r2)
+		-- Same as vim.treesitter.node_contains, but without its argument
+		-- validation; this is called for every pair of matches.
+		local sr1, sc1, er1, ec1 = m1.match.container:range()
+		local sr2, sc2, er2, ec2 = m2.match.container:range()
+		local starts_before = sr1 < sr2 or (sr1 == sr2 and sc1 <= sc2)
+		local ends_after = er1 > er2 or (er1 == er2 and ec1 >= ec2)
+		return starts_before and ends_after
 	end,
 	---Appends the given match tree `m2` to this match tree.  Will traverse
 	---through the descendants until it finds the most appropriate one.

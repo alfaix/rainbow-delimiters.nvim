@@ -95,21 +95,23 @@ function M.highlight(bufnr, lang, node, hlgroup)
 	-- range of the capture, zero-indexed
 	local startRow, startCol, endRow, endCol = node:range()
 
-	local start, finish = {startRow, startCol}, {endRow, endCol - 1}
 	local priority = config.priority[lang]
 	if type(priority) == "function" then
 		priority = priority(bufnr)
 	end
-	local opts = {
-		regtype   = 'v',
-		inclusive = true,
-		priority  = priority,
-	}
 
 	local nsid = M.nsids[lang]
 
+	-- A plain extmark instead of vim.hl.range, which is several times slower
+	-- because it has to handle arbitrary positions and region types.
 	if vim.api.nvim_buf_is_loaded(bufnr) then
-		(vim.hl or vim.highlight).range(bufnr, nsid, hlgroup, start, finish, opts)
+		vim.api.nvim_buf_set_extmark(bufnr, nsid, startRow, startCol, {
+			end_row  = endRow,
+			end_col  = endCol,
+			hl_group = hlgroup,
+			priority = priority,
+			strict   = false,
+		})
 	end
 end
 

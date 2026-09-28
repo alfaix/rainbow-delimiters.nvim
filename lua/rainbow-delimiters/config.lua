@@ -19,15 +19,19 @@
 local function get_nested(table, index, key)
 	local result
 
+	-- Every access to vim.g converts the entire variable, so only read it once
+	local settings = vim.g.rainbow_delimiters
+	local user = settings and settings[index]
+
 	-- 1. User setting for file type
-	if vim.g.rainbow_delimiters and vim.g.rainbow_delimiters[index] then
-		result = rawget(vim.g.rainbow_delimiters[index], key)
+	if user then
+		result = rawget(user, key)
 	end
 	if result ~= nil then return result end
 
 	-- 2. User setting for fallback
-	if vim.g.rainbow_delimiters and vim.g.rainbow_delimiters[index] then
-		result = rawget(vim.g.rainbow_delimiters[index], '')
+	if user then
+		result = rawget(user, '')
 	end
 	if result ~= nil then return result end
 
@@ -103,8 +107,9 @@ setmetatable(M, {
 		if key == 'highlight' then
 			local highlight
 
-			if vim.g.rainbow_delimiters then
-				highlight = rawget(vim.g.rainbow_delimiters, 'highlight')
+			local settings = vim.g.rainbow_delimiters
+			if settings then
+				highlight = rawget(settings, 'highlight')
 			end
 			if highlight and #highlight > 0 then return highlight end
 
